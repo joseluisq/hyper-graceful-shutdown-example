@@ -2,7 +2,7 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response, Server};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::oneshot::{channel, Receiver};
+use tokio::sync::watch::{channel, Receiver};
 use tokio::sync::Mutex;
 
 pub type Result<T = (), E = anyhow::Error> = anyhow::Result<T, E>;
@@ -22,7 +22,7 @@ async fn run_server(addr: SocketAddr, num: usize, receiver: Arc<Mutex<Option<Rec
         .with_graceful_shutdown(async {
             println!("Server #{} is waiting for signal...", num);
             if let Some(receiver) = &mut *receiver.lock().await {
-                receiver.await.ok();
+                receiver.changed().await.ok();
                 println!("Stopping server #{}...", num);
             }
         });
@@ -35,18 +35,18 @@ async fn run_server(addr: SocketAddr, num: usize, receiver: Arc<Mutex<Option<Rec
 }
 
 fn main() -> Result {
-    // Our message passing
-    // single-producer, single consumer channel
-    let (sender, receiver) = channel::<()>();
+    // Our message passing via Toki watch channel.
+    // watch: single-producer, multi-consumer channel
+    let (sender, receiver) = channel(());
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(async {
             // Simuate signal sending
-            let signal = tokio::spawn(async {
+            let signal = tokio::spawn(async move {
                 // Wait 5 secs and send a signal
-                println!("Waiting 5 secs for to send the signal...");
+                println!("Waiting 5 secs before sending the signal...");
                 std::thread::sleep(std::time::Duration::new(5, 0));
                 println!("Termination signal sent!");
                 let _ = sender.send(());
